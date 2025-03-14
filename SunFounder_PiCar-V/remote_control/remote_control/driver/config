@@ -1,0 +1,10 @@
+forward_A = 0
+
+forward_B = 0
+
+turning_offset = 2
+
+pan_offset = 13
+
+tilt_offset = -22
+

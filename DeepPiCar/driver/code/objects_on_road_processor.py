@@ -151,7 +151,12 @@ class ObjectsOnRoadProcessor(object):
         input_array = np.array(img_pil, dtype=np.uint8).reshape(1, self.input_height, self.input_width, 3)
         self.interpreter.set_tensor(self.interpreter.get_input_details()[0]['index'], input_array)
         
+        # HUOM TÄSSÄ ON MUOKATTU KOHTA
+        #self.interpreter.invoke()
+        start = time.time()
         self.interpreter.invoke()
+        inference_time = time.time() - start
+        logging.info(f"TPU inference time: {inference_time:.3f} seconds")
         
         # Retrieve objects from the model output
         #objects = self.engine.DetectWithImage(img_pil, threshold=self.min_confidence, keep_aspect_ratio=True,

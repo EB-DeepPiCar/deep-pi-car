@@ -5,7 +5,7 @@ import math
 import datetime
 import sys
 
-_SHOW_IMAGE = False
+_SHOW_IMAGE = True
 
 
 class HandCodedLaneFollower(object):
@@ -14,30 +14,72 @@ class HandCodedLaneFollower(object):
         logging.info('Creating a HandCodedLaneFollower...')
         self.car = car
         self.curr_steering_angle = 90
+        
+        # NÄMÄ LISÄTTY ITSE
+        self.no_lane_counter = 0
+        self.max_no_lane_frames = 5 # eli käytännössä heti kun ei havaita kaistaviivoja niin auto pysähtyy
+        self.was_stopped_due_to_lanes = False
 
     def follow_lane(self, frame):
         # Main entry point of the lane follower
-        show_image("orig", frame)
+        #show_image("orig", frame)
 
         lane_lines, frame = detect_lane(frame)
         final_frame = self.steer(frame, lane_lines)
 
         return final_frame
 
+    #def steer(self, frame, lane_lines):
+        
+        #logging.debug('steering...')
+        
+        #if len(lane_lines) == 0:
+            #logging.error('No lane lines detected, nothing to do.')
+            #return frame
+        
+        #new_steering_angle = compute_steering_angle(frame, lane_lines)
+        #self.curr_steering_angle = stabilize_steering_angle(self.curr_steering_angle, new_steering_angle, len(lane_lines))
+
+        #if self.car is not None:
+            #self.car.front_wheels.turn(self.curr_steering_angle)
+        #curr_heading_image = display_heading_line(frame, self.curr_steering_angle)
+        #show_image("heading", curr_heading_image)
+
+        #return curr_heading_image
+        
     def steer(self, frame, lane_lines):
         logging.debug('steering...')
+
         if len(lane_lines) == 0:
-            logging.error('No lane lines detected, nothing to do.')
-            return frame
+            self.no_lane_counter += 1
+            logging.warning(f'No lane lines detected ({self.no_lane_counter}/{self.max_no_lane_frames})')
+
+            if self.no_lane_counter >= self.max_no_lane_frames and not self.was_stopped_due_to_lanes:
+                logging.error('Too many frames without lane lines — stopping the car!')
+                if self.car is not None:
+                    self.car.back_wheels.speed = 0
+                self.was_stopped_due_to_lanes = True
+
+            return frame  # Skip steering if no lane lines
+
+        # Lanes found again
+        if self.was_stopped_due_to_lanes:
+            logging.info("Lane lines detected again — resuming driving")
+            if self.car is not None:
+                self.car.back_wheels.speed = self.car.speed  # resume original speed
+            self.was_stopped_due_to_lanes = False
+
+        self.no_lane_counter = 0  # reset counter
 
         new_steering_angle = compute_steering_angle(frame, lane_lines)
-        self.curr_steering_angle = stabilize_steering_angle(self.curr_steering_angle, new_steering_angle, len(lane_lines))
+        self.curr_steering_angle = stabilize_steering_angle(
+            self.curr_steering_angle, new_steering_angle, len(lane_lines)
+        )
 
         if self.car is not None:
             self.car.front_wheels.turn(self.curr_steering_angle)
-        curr_heading_image = display_heading_line(frame, self.curr_steering_angle)
-        show_image("heading", curr_heading_image)
 
+        curr_heading_image = display_heading_line(frame, self.curr_steering_angle)
         return curr_heading_image
 
 
@@ -48,18 +90,18 @@ def detect_lane(frame):
     logging.debug('detecting lane lines...')
 
     edges = detect_edges(frame)
-    show_image('edges', edges)
+    #show_image('edges', edges)
 
     cropped_edges = region_of_interest(edges)
-    show_image('edges cropped', cropped_edges)
+    #show_image('edges cropped', cropped_edges)
 
     line_segments = detect_line_segments(cropped_edges)
     line_segment_image = display_lines(frame, line_segments)
-    show_image("line segments", line_segment_image)
+    #show_image("line segments", line_segment_image)
 
     lane_lines = average_slope_intercept(frame, line_segments)
     lane_lines_image = display_lines(frame, lane_lines)
-    show_image("lane lines", lane_lines_image)
+    #show_image("lane lines", lane_lines_image)
 
     return lane_lines, lane_lines_image
 
@@ -68,8 +110,10 @@ def detect_edges(frame):
     # filter for blue lane lines
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     show_image("hsv", hsv)
-    lower_blue = np.array([30, 40, 0])
-    upper_blue = np.array([150, 255, 255])
+    #lower_blue = np.array([30, 40, 0])
+    #upper_blue = np.array([150, 255, 255])
+    lower_blue = np.array([100, 115, 144])
+    upper_blue = np.array([130, 255, 255])
     mask = cv2.inRange(hsv, lower_blue, upper_blue)
     show_image("blue mask", mask)
 
@@ -81,7 +125,7 @@ def detect_edges(frame):
 def detect_edges_old(frame):
     # filter for blue lane lines
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    show_image("hsv", hsv)
+    #show_image("hsv", hsv)
     for i in range(16):
         lower_blue = np.array([30, 16 * i, 0])
         upper_blue = np.array([150, 255, 255])
@@ -108,14 +152,16 @@ def region_of_interest(canny):
     # only focus bottom half of the screen
 
     polygon = np.array([[
-        (0, height * 1 / 2),
-        (width, height * 1 / 2),
+        #(0, height * 1 / 2),
+        (0, height * 0.6),
+        #(width, height * 1 / 2),
+        (width, height * 0.6),
         (width, height),
         (0, height),
     ]], np.int32)
 
     cv2.fillPoly(mask, polygon, 255)
-    show_image("mask", mask)
+    #show_image("mask", mask)
     masked_image = cv2.bitwise_and(canny, mask)
     return masked_image
 
@@ -124,17 +170,16 @@ def detect_line_segments(cropped_edges):
     # tuning min_threshold, minLineLength, maxLineGap is a trial and error process by hand
     rho = 1  # precision in pixel, i.e. 1 pixel
     angle = np.pi / 180  # degree in radian, i.e. 1 degree
-    min_threshold = 10  # minimal of votes
+    min_threshold = 20  # minimal of votes, NOTE this was 10 in orig code
     line_segments = cv2.HoughLinesP(cropped_edges, rho, angle, min_threshold, np.array([]), minLineLength=8,
                                     maxLineGap=4)
 
-    if line_segments is not None:
-        for line_segment in line_segments:
-            logging.debug('detected line_segment:')
-            logging.debug("%s of length %s" % (line_segment, length_of_line_segment(line_segment[0])))
+    #if line_segments is not None:
+        #for line_segment in line_segments:
+            #logging.debug('detected line_segment:')
+            #logging.debug("%s of length %s" % (line_segment, length_of_line_segment(line_segment[0])))
 
     return line_segments
-
 
 def average_slope_intercept(frame, line_segments):
     """
@@ -160,6 +205,18 @@ def average_slope_intercept(frame, line_segments):
             if x1 == x2:
                 logging.info('skipping vertical line segment (slope=inf): %s' % line_segment)
                 continue
+                
+            # tämä lisätty itse, estää ristiin menevät?
+            if (x1 < width / 2 < x2) or (x2 < width / 2 < x1):
+                logging.debug(f"Skipping crossing line: {line_segment}")
+                continue
+                
+            # tämä lisätty, jättää huomiotta melkein vaakasuorat viivat
+            fit = np.polyfit((x1, x2), (y1, y2), 1)
+            if abs(fit[0]) < 0.3:
+                #logging.debug(f'Skipping flat-ish line: {line_segment}')
+                continue
+            
             fit = np.polyfit((x1, x2), (y1, y2), 1)
             slope = fit[0]
             intercept = fit[1]
@@ -247,6 +304,7 @@ def display_lines(frame, lines, line_color=(0, 255, 0), line_width=10):
             for x1, y1, x2, y2 in line:
                 cv2.line(line_image, (x1, y1), (x2, y2), line_color, line_width)
     line_image = cv2.addWeighted(frame, 0.8, line_image, 1, 1)
+
     return line_image
 
 
@@ -288,7 +346,8 @@ def make_points(frame, line):
     height, width, _ = frame.shape
     slope, intercept = line
     y1 = height  # bottom of the frame
-    y2 = int(y1 * 1 / 2)  # make points from middle of the frame down
+    #y2 = int(y1 * 1 / 2)  # make points from middle of the frame down
+    y2 = int(y1 * 0.7)
 
     # bound the coordinates within the frame
     x1 = max(-width, min(2 * width, int((y1 - intercept) / slope)))

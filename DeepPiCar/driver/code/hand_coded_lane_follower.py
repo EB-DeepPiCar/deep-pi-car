@@ -5,7 +5,7 @@ import math
 import datetime
 import sys
 
-_SHOW_IMAGE = True
+_SHOW_IMAGE = True # tämä lisätty hallitsemaan videokuvien ponnahduksia esille
 
 
 class HandCodedLaneFollower(object):
@@ -48,9 +48,11 @@ class HandCodedLaneFollower(object):
         #return curr_heading_image
         
     def steer(self, frame, lane_lines):
+
         logging.debug('steering...')
 
         if len(lane_lines) == 0:
+
             self.no_lane_counter += 1
             logging.warning(f'No lane lines detected ({self.no_lane_counter}/{self.max_no_lane_frames})')
 
@@ -59,7 +61,6 @@ class HandCodedLaneFollower(object):
                 if self.car is not None:
                     self.car.back_wheels.speed = 0
                 self.was_stopped_due_to_lanes = True
-
             return frame  # Skip steering if no lane lines
 
         # Lanes found again
@@ -112,7 +113,7 @@ def detect_edges(frame):
     show_image("hsv", hsv)
     #lower_blue = np.array([30, 40, 0])
     #upper_blue = np.array([150, 255, 255])
-    lower_blue = np.array([100, 115, 144])
+    lower_blue = np.array([100, 115, 100])
     upper_blue = np.array([130, 255, 255])
     mask = cv2.inRange(hsv, lower_blue, upper_blue)
     show_image("blue mask", mask)
@@ -152,16 +153,16 @@ def region_of_interest(canny):
     # only focus bottom half of the screen
 
     polygon = np.array([[
-        #(0, height * 1 / 2),
-        (0, height * 0.6),
-        #(width, height * 1 / 2),
-        (width, height * 0.6),
+        (0, height * 1 / 2),
+        #(0, height * 0.6),
+        (width, height * 1 / 2),
+        #(width, height * 0.6),
         (width, height),
         (0, height),
     ]], np.int32)
 
     cv2.fillPoly(mask, polygon, 255)
-    #show_image("mask", mask)
+    show_image("mask", mask)
     masked_image = cv2.bitwise_and(canny, mask)
     return masked_image
 
@@ -170,9 +171,15 @@ def detect_line_segments(cropped_edges):
     # tuning min_threshold, minLineLength, maxLineGap is a trial and error process by hand
     rho = 1  # precision in pixel, i.e. 1 pixel
     angle = np.pi / 180  # degree in radian, i.e. 1 degree
-    min_threshold = 20  # minimal of votes, NOTE this was 10 in orig code
-    line_segments = cv2.HoughLinesP(cropped_edges, rho, angle, min_threshold, np.array([]), minLineLength=8,
-                                    maxLineGap=4)
+    min_threshold = 20  # changed from 10
+    line_segments = cv2.HoughLinesP(
+        cropped_edges, 
+        rho, 
+        angle, 
+        min_threshold, 
+        np.array([]), 
+        minLineLength=10, # changed from 8
+        maxLineGap=4)
 
     #if line_segments is not None:
         #for line_segment in line_segments:
@@ -207,25 +214,33 @@ def average_slope_intercept(frame, line_segments):
                 continue
                 
             # tämä lisätty itse, estää ristiin menevät?
-            if (x1 < width / 2 < x2) or (x2 < width / 2 < x1):
-                logging.debug(f"Skipping crossing line: {line_segment}")
-                continue
+            #if (x1 < width / 2 < x2) or (x2 < width / 2 < x1):
+                #logging.debug(f"Skipping crossing line: {line_segment}")
+                #continue
                 
             # tämä lisätty, jättää huomiotta melkein vaakasuorat viivat
             fit = np.polyfit((x1, x2), (y1, y2), 1)
-            if abs(fit[0]) < 0.3:
-                #logging.debug(f'Skipping flat-ish line: {line_segment}')
+            if abs(fit[0]) < 0.2: # testataan eri arvoja, oli eka 0.3
+                logging.debug(f'Skipping flat-ish line: {line_segment}')
                 continue
             
             fit = np.polyfit((x1, x2), (y1, y2), 1)
             slope = fit[0]
             intercept = fit[1]
+            
+            #if slope < 0:
+                #if x1 < left_region_boundary and x2 < left_region_boundary:
+                    #left_fit.append((slope, intercept))
+            #else:
+                #if x1 > right_region_boundary and x2 > right_region_boundary:
+                    #right_fit.append((slope, intercept))
+            
+            # LISÄÄTTY ITSE, hyväksy jyrkempiä viivoja esim tiukoissa mutkissa?
             if slope < 0:
-                if x1 < left_region_boundary and x2 < left_region_boundary:
-                    left_fit.append((slope, intercept))
+                left_fit.append((slope, intercept))
             else:
-                if x1 > right_region_boundary and x2 > right_region_boundary:
-                    right_fit.append((slope, intercept))
+                right_fit.append((slope, intercept))
+            
 
     left_fit_average = np.average(left_fit, axis=0)
     if len(left_fit) > 0:
@@ -246,19 +261,23 @@ def compute_steering_angle(frame, lane_lines):
     """
     if len(lane_lines) == 0:
         logging.info('No lane lines detected, do nothing')
-        return -90
+        return -90 # stay straight if blind
 
     height, width, _ = frame.shape
+    
     if len(lane_lines) == 1:
         logging.debug('Only detected one lane line, just follow it. %s' % lane_lines[0])
         x1, _, x2, _ = lane_lines[0][0]
-        x_offset = x2 - x1
+        #x_offset = x2 - x1
+        mid = width/2 # TÄMÄ LISÄTTY ITSE
+        x_offset = x2 - mid # TÄMÄ LISÄTTY ITSE
     else:
         _, _, left_x2, _ = lane_lines[0][0]
         _, _, right_x2, _ = lane_lines[1][0]
         camera_mid_offset_percent = 0.02 # 0.0 means car pointing to center, -0.03: car is centered to left, +0.03 means car pointing to right
         mid = int(width / 2 * (1 + camera_mid_offset_percent))
-        x_offset = (left_x2 + right_x2) / 2 - mid
+        #x_offset = (left_x2 + right_x2) / 2 - mid
+        x_offset = ((left_x2 + right_x2) / 2 - mid) * 0.5 # reduce how hard dives into turn
 
     # find the steering angle, which is angle between navigation direction to end of center line
     y_offset = int(height / 2)
@@ -266,12 +285,22 @@ def compute_steering_angle(frame, lane_lines):
     angle_to_mid_radian = math.atan(x_offset / y_offset)  # angle (in radian) to center vertical line
     angle_to_mid_deg = int(angle_to_mid_radian * 180.0 / math.pi)  # angle (in degrees) to center vertical line
     steering_angle = angle_to_mid_deg + 90  # this is the steering angle needed by picar front wheel
+    
+    # ADDED SELF
+    # Clamp to prevent sharp turns
+    angle_diff = abs(steering_angle -90)
+    if angle_diff > 20:
+        steering_angle = max(72, min(108, steering_angle))
+    #elif angle_diff > 10:
+        #steering_angle = max(72, min(108, steering_angle))
+    else:
+        steering_angle = max(75, min(105, steering_angle))
 
     logging.debug('new steering angle: %s' % steering_angle)
     return steering_angle
 
 
-def stabilize_steering_angle(curr_steering_angle, new_steering_angle, num_of_lane_lines, max_angle_deviation_two_lines=5, max_angle_deviation_one_lane=1):
+def stabilize_steering_angle(curr_steering_angle, new_steering_angle, num_of_lane_lines, max_angle_deviation_two_lines=5, max_angle_deviation_one_lane=2): # yksi kaista muutettu 1->2
     """
     Using last steering angle to stabilize the steering angle
     This can be improved to use last N angles, etc

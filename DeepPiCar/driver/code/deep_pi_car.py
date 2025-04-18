@@ -96,7 +96,7 @@ class DeepPiCar(object):
                         logging.info('Camera ready!')
                         break
                 logging.debug('Camera not ready yet!')
-                cv2.waitKey(100)
+                cv2.waitKey(1000)
 
         logging.info('Starting to drive at speed %s...' % speed)
         
@@ -120,7 +120,9 @@ class DeepPiCar(object):
 
             image_lane = self.follow_lane(image_lane)
             self.video_lane.write(image_lane)
-            show_image('Lane Lines', image_lane)
+            #show_image('Lane Lines', image_lane)       #Original 'main screen'
+            dashboard = self.lane_follower.draw_dashboard(image_lane, self.speed)
+            show_image('Dashboard', dashboard)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 self.cleanup()
@@ -139,9 +141,9 @@ class DeepPiCar(object):
 # Utility Functions
 ############################
 def show_image(title, frame, show=_SHOW_IMAGE):
+
     if show:
         cv2.imshow(title, frame)
-
 
 def main():
     with DeepPiCar() as car:

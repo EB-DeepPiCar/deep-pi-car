@@ -19,6 +19,32 @@ class HandCodedLaneFollower(object):
         self.no_lane_counter = 0
         self.max_no_lane_frames = 5 # eli käytännössä heti kun ei havaita kaistaviivoja niin auto pysähtyy
         self.was_stopped_due_to_lanes = False
+    
+    # PIIRRÄ AJOTIETOKONE
+    #@staticmethod
+    def draw_dashboard(self, frame, speed):
+        
+        dashboard = frame.copy()
+        lane_lines, frame = detect_lane(frame)
+        angle = self.curr_steering_angle -90    # 0 Degrees is straight forward
+
+        # Ajokulma
+        cv2.putText(dashboard, f"Angle: {angle:.2f} deg", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+
+        # Nopeus
+        cv2.putText(dashboard, f"Speed: {speed:.1f} units", (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+        # Kaistaviivat
+        #if lane_lines is not None:
+        #    for i, (x1, y1, x2, y2) in enumerate(lane_lines):
+        #        text = f"L{i+1}: ({x1},{y1}) -> ({x2},{y2})"
+        #        cv2.putText(dashboard, text, (10, 100 + i*30),
+        #                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 100), 1)
+
+        return dashboard
+
 
     def follow_lane(self, frame):
         # Main entry point of the lane follower
@@ -48,11 +74,9 @@ class HandCodedLaneFollower(object):
         #return curr_heading_image
         
     def steer(self, frame, lane_lines):
-
         logging.debug('steering...')
 
         if len(lane_lines) == 0:
-
             self.no_lane_counter += 1
             logging.warning(f'No lane lines detected ({self.no_lane_counter}/{self.max_no_lane_frames})')
 
@@ -61,6 +85,7 @@ class HandCodedLaneFollower(object):
                 if self.car is not None:
                     self.car.back_wheels.speed = 0
                 self.was_stopped_due_to_lanes = True
+
             return frame  # Skip steering if no lane lines
 
         # Lanes found again
@@ -154,9 +179,9 @@ def region_of_interest(canny):
 
     polygon = np.array([[
         (0, height * 1 / 2),
-        #(0, height * 0.6),
+        #(0, height * 0.4),
         (width, height * 1 / 2),
-        #(width, height * 0.6),
+        #(width, height * 0.4),
         (width, height),
         (0, height),
     ]], np.int32)
@@ -289,12 +314,15 @@ def compute_steering_angle(frame, lane_lines):
     # ADDED SELF
     # Clamp to prevent sharp turns
     angle_diff = abs(steering_angle -90)
-    if angle_diff > 20:
-        steering_angle = max(72, min(108, steering_angle))
-    #elif angle_diff > 10:
-        #steering_angle = max(72, min(108, steering_angle))
+    if len(lane_lines) == 1:
+        steering_angle = max(68, min(112, steering_angle))
     else:
-        steering_angle = max(75, min(105, steering_angle))
+        if angle_diff > 20:
+            steering_angle = max(72, min(108, steering_angle))
+        #elif angle_diff > 10:
+            #steering_angle = max(72, min(108, steering_angle))
+        else:
+            steering_angle = max(75, min(105, steering_angle))
 
     logging.debug('new steering angle: %s' % steering_angle)
     return steering_angle

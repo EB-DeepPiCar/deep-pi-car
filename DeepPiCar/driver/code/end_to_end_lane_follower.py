@@ -17,7 +17,8 @@ class EndToEndLaneFollower(object):
 
         self.car = car
         self.curr_steering_angle = 90
-        self.model = load_model(model_path)
+        self.model = load_model(model_path) # HUOM
+        #self.model = load_model(model_path, compile=False)
 
     def follow_lane(self, frame):
         # Main entry point of the lane follower
@@ -37,7 +38,8 @@ class EndToEndLaneFollower(object):
             We assume that camera is calibrated to point to dead center
         """
         preprocessed = img_preprocess(frame)
-        X = np.asarray([preprocessed])
+        #X = np.asarray([preprocessed]) # huom tämä muutettu
+        X = np.expand_dims(preprocessed, axis=0)
         steering_angle = self.model.predict(X)[0]
 
         logging.debug('new steering angle: %s' % steering_angle)

@@ -3,11 +3,13 @@ import picar
 import cv2
 import datetime
 from hand_coded_lane_follower import HandCodedLaneFollower
+from end_to_end_lane_follower import EndToEndLaneFollower
 from objects_on_road_processor import ObjectsOnRoadProcessor
+import numpy as np
 
 _SHOW_IMAGE = True
 _ENABLE_OBJECT_RECOGNITION = False
-
+_USE_DEEP_LEARNING = False
 
 class DeepPiCar(object):
 
@@ -36,6 +38,12 @@ class DeepPiCar(object):
 
         logging.debug('Set up back wheels')
         self.back_wheels = picar.back_wheels.Back_Wheels()
+        
+        # force known correct direction offsets
+        #self.back_wheels.left_wheel.offset = 1
+        #self.back_wheels.right_wheel.offset = 1
+        self.back_wheels.forward()  # Ensure correct direction
+        logging.info(f"Direction reset in __init__: A={self.back_wheels.forward_A}, B={self.back_wheels.forward_B}")
         self.back_wheels.speed = 0  # Speed Range is 0 (stop) - 100 (fastest)
 
         logging.debug('Set up front wheels')
@@ -43,7 +51,14 @@ class DeepPiCar(object):
         self.front_wheels.turning_offset = 0 #-25  # calibrate servo to center
         self.front_wheels.turn(90)  # Steering Range is 45 (left) - 90 (center) - 135 (right)
 
-        self.lane_follower = HandCodedLaneFollower(self)
+        #self.lane_follower = HandCodedLaneFollower(self)
+        if _USE_DEEP_LEARNING:
+                logging.info("Using End-To-End Deep Learning Lane Follower")
+                self.lane_follower = EndToEndLaneFollower(self)
+        else:
+                logging.info("Using Hand-Coded Lane Follower")
+                self.lane_follower = HandCodedLaneFollower(self)
+        
         self.traffic_sign_processor = ObjectsOnRoadProcessor(self)
         # lane_follower = DeepLearningLaneFollower()
 
@@ -52,6 +67,8 @@ class DeepPiCar(object):
         self.video_orig = self.create_video_recorder('../data/tmp/car_video%s.avi' % datestr)
         self.video_lane = self.create_video_recorder('../data/tmp/car_video_lane%s.avi' % datestr)
         self.video_objs = self.create_video_recorder('../data/tmp/car_video_objs%s.avi' % datestr)
+
+        logging.info(f"Forward_A: {self.back_wheels.forward_A}, Forward_B: {self.back_wheels.forward_B}")
 
         logging.info('Created a DeepPiCar')
 
@@ -74,6 +91,7 @@ class DeepPiCar(object):
         """ Reset the hardware"""
         logging.info('Stopping the car, resetting hardware.')
         self.back_wheels.speed = 0
+        self.back_wheels.forward() # ensure correct direction
         self.front_wheels.turn(90)
         self.camera.release()
         self.video_orig.release()
@@ -89,15 +107,23 @@ class DeepPiCar(object):
         """
         
         # tämä lohko on lisätty itse
-        logging.info('Waiting for camera to warm up...')
-        while True:
+        logging.info('Waiting for camera to produce valid frames...')
+        max_attempts = 30
+        attempts = 0
+        while attempts < max_attempts:
                 ret, frame = self.camera.read()
-                if ret:
-                        logging.info('Camera ready!')
+                if ret and frame is not None and not is_black_frame(frame):
+                        logging.info('Camera feed looks good, starting to drive.')
                         break
-                logging.debug('Camera not ready yet!')
-                cv2.waitKey(1000)
+                logging.debug(f"Attempt {attempts+1}: Camera not ready yet or frame dark")
+                cv2.waitKey(500)
+                attempts += 1
+        else:
+                logging.error("Camera did not warm up in time. Aborting drive.")
+                return
 
+        
+        
         logging.info('Starting to drive at speed %s...' % speed)
         
         self.back_wheels.speed = speed
@@ -121,8 +147,10 @@ class DeepPiCar(object):
             image_lane = self.follow_lane(image_lane)
             self.video_lane.write(image_lane)
             #show_image('Lane Lines', image_lane)       #Original 'main screen'
-            dashboard = self.lane_follower.draw_dashboard(image_lane, self.speed)
-            show_image('Dashboard', dashboard)
+            
+            if hasattr(self.lane_follower, 'draw_dashboard'):
+                dashboard = self.lane_follower.draw_dashboard(image_lane, self.speed)
+                show_image('Dashboard', dashboard)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 self.cleanup()
@@ -140,6 +168,10 @@ class DeepPiCar(object):
 ############################
 # Utility Functions
 ############################
+
+def is_black_frame(frame, threshold = 10):
+        return np.mean(frame) < threshold
+
 def show_image(title, frame, show=_SHOW_IMAGE):
 
     if show:

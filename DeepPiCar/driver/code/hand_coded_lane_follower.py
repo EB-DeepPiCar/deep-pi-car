@@ -4,6 +4,7 @@ import logging
 import math
 import datetime
 import sys
+import time
 
 _SHOW_IMAGE = True # tämä lisätty hallitsemaan videokuvien ponnahduksia esille
 
@@ -16,9 +17,83 @@ class HandCodedLaneFollower(object):
         self.curr_steering_angle = 90
         
         # NÄMÄ LISÄTTY ITSE
+        
         self.no_lane_counter = 0
         self.max_no_lane_frames = 5 # eli käytännössä heti kun ei havaita kaistaviivoja niin auto pysähtyy
         self.was_stopped_due_to_lanes = False
+        
+        self.recovery_attempts = 0
+        self.max_recovery_attempts = 3
+        self.recovery_in_progress = False
+    
+    
+    # KOKEILE SUORAAN PAKITTAMISTA, JOS KADOTAT KAISTAT KESKEN KÄÄNNÖKSEN
+    def try_recovery_by_reversing(self):
+        if self.recovery_attempts >= self.max_recovery_attempts:
+            logging.warning("Maximum recovery attempts reached. Staying stopped.")
+            return
+
+        logging.info(f"Attempting recovery (attempt {self.recovery_attempts + 1}) by reversing...")
+
+        self.recovery_in_progress = True
+        self.recovery_attempts += 1
+
+        if self.car is None:
+            logging.warning("Car not available. Skipping recovery.")
+            return
+
+        # Set wheels straight and reverse briefly
+        #self.car.front_wheels.turn(90)
+        #self.car.back_wheels.backward()
+        #self.car.back_wheels.speed = 30
+        #time.sleep(1)
+        #self.car.back_wheels.stop()
+        # Restore forward direction
+        #self.car.back_wheels.forward()
+        #self.car.back_wheels.speed = 0 # don't resume yet unless lanes found
+        
+        # Adjust reversing angle based on current steering
+        reverse_steering_angle = 90
+        if self.curr_steering_angle < 85:
+            reverse_steering_angle = 105 # was turning left, reverse slightly right
+        elif self.curr_steering_angle > 95:
+            reverse_steering_angle = 75 # was turning right, reverse slightly right
+        logging.info(f"Reversing with adjusted steering angle: {reverse_steering_angle}")
+        self.car.front_wheels.turn(reverse_steering_angle)
+        self.car.back_wheels.backward()
+        self.car.back_wheels.speed = 30
+        time.sleep(1.5)
+        self.car.back_wheels.speed = 0
+
+        # Try to reacquire lane lines
+        for i in range(3):
+            ret, frame = self.car.camera.read()
+            if not ret:
+                logging.warning("Failed to read camera during recovery.")
+                continue
+
+            lane_lines, _ = detect_lane(frame)
+            if len(lane_lines) > 0:
+                logging.info("Lane lines found during recovery. Resuming drive.")
+                self.was_stopped_due_to_lanes = False
+                self.no_lane_counter = 0
+                self.recovery_attempts = 0
+                self.recovery_in_progress = False
+                self.car.back_wheels.forward()
+                self.car.back_wheels.speed = self.car.speed
+                return
+
+        logging.warning("Lane recovery failed. Staying stopped.")
+        self.recovery_in_progress = False
+        
+        # Ensure we're not stuck in reverse
+        if self.car is not None:
+            self.car.back_wheels.forward()
+            #self.car.back_wheels.speed = 0
+            self.car.back_wheels.stop()
+            self.car.front_wheels.turn(90)
+            logging.info(f"Direction reset after failed recovery: A={self.car.back_wheels.forward_A}, B={self.car.back_wheels.forward_B}")
+    
     
     # PIIRRÄ AJOTIETOKONE
     #@staticmethod
@@ -85,6 +160,11 @@ class HandCodedLaneFollower(object):
                 if self.car is not None:
                     self.car.back_wheels.speed = 0
                 self.was_stopped_due_to_lanes = True
+                
+                # Only try recovery if we're turning
+                angle_diff = abs(self.curr_steering_angle -90)
+                if angle_diff > 5 and not self.recovery_in_progress:
+                    self.try_recovery_by_reversing()
 
             return frame  # Skip steering if no lane lines
 
